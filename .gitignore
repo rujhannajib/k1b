@@ -1,0 +1,16 @@
+# Python
+.venv/
+__pycache__/
+*.pyc
+
+# Piper voice models (large, downloaded on the robot)
+voices/
+*.onnx
+*.onnx.json
+
+# Generated audio
+*.wav
+
+# Editor / OS
+.vscode/
+.DS_Store

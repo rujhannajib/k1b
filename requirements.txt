@@ -1,0 +1,4 @@
+fastapi
+uvicorn[standard]
+piper-tts
+numpy<1.25

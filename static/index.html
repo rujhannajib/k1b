@@ -1,0 +1,280 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>k1b · Booster K1</title>
+  <style>
+    :root {
+      --bg: #f4f5f7; --card: #ffffff; --text: #1d2330; --muted: #6b7385;
+      --accent: #2f6fed; --ok: #1f9d55; --warn: #d98e04; --bad: #d64545;
+      --border: #e2e5ea;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0; font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+      background: var(--bg); color: var(--text);
+    }
+    header {
+      display: flex; justify-content: space-between; align-items: center;
+      padding: 16px 24px; background: var(--card); border-bottom: 1px solid var(--border);
+    }
+    header h1 { margin: 0; font-size: 20px; }
+    header .sub { color: var(--muted); font-size: 13px; }
+    .dot { display: inline-block; width: 10px; height: 10px; border-radius: 50%;
+           background: var(--bad); margin-right: 6px; }
+    .dot.on { background: var(--ok); }
+    main { max-width: 900px; margin: 24px auto; padding: 0 16px;
+           display: grid; gap: 16px; grid-template-columns: 1fr 1fr; }
+    @media (max-width: 700px) { main { grid-template-columns: 1fr; } }
+    .card { background: var(--card); border: 1px solid var(--border);
+            border-radius: 12px; padding: 20px; }
+    .card h2 { margin: 0 0 12px; font-size: 15px; color: var(--muted);
+               text-transform: uppercase; letter-spacing: .04em; }
+    .wide { grid-column: 1 / -1; }
+    .big { font-size: 44px; font-weight: 600; }
+    .bar { height: 10px; background: var(--border); border-radius: 5px; overflow: hidden; margin-top: 8px; }
+    .bar > div { height: 100%; width: 0; background: var(--ok); transition: width .4s; }
+    dl { display: grid; grid-template-columns: auto 1fr; gap: 6px 16px; margin: 0; font-size: 14px; }
+    dt { color: var(--muted); }
+    dd { margin: 0; word-break: break-all; }
+    textarea { width: 100%; min-height: 90px; padding: 10px; font: inherit; font-size: 15px;
+               border: 1px solid var(--border); border-radius: 8px; resize: vertical; }
+    .row { display: flex; gap: 8px; margin-top: 10px; flex-wrap: wrap; align-items: center; }
+    select, button { font: inherit; padding: 8px 14px; border-radius: 8px; border: 1px solid var(--border); }
+    button { background: var(--accent); color: white; border: none; cursor: pointer; }
+    button:disabled { opacity: .5; cursor: wait; }
+    button.ghost { background: transparent; color: var(--accent); border: 1px solid var(--accent); }
+    .msg { font-size: 13px; color: var(--muted); margin-top: 8px; min-height: 18px; }
+    .msg.err { color: var(--bad); }
+    .counter { margin-left: auto; font-size: 12px; color: var(--muted); }
+    .temps { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; }
+    @media (max-width: 700px) { .temps { grid-template-columns: 1fr; } }
+    .temps h3 { margin: 0 0 8px; font-size: 13px; font-weight: 600; }
+    .chips { display: flex; flex-wrap: wrap; gap: 6px; font-size: 13px; color: var(--muted); }
+    .chip { padding: 4px 8px; border-radius: 6px; background: var(--bg);
+            border: 1px solid var(--border); color: var(--text); }
+    .chip b { font-weight: 600; }
+    .chip.ok   { background: #e6f6ec; border-color: var(--ok);   color: #146c3a; }
+    .chip.warn { background: #fdf3dc; border-color: var(--warn); color: #8a5a00; }
+    .chip.bad  { background: #fbe4e4; border-color: var(--bad);  color: #a12b2b; }
+    .legend { display: flex; gap: 14px; font-size: 12px; color: var(--muted); margin-top: 14px; }
+    .legend i { display: inline-block; width: 10px; height: 10px; border-radius: 3px;
+                margin-right: 5px; vertical-align: -1px; }
+    .err-text { color: var(--bad); font-size: 12px; margin-top: 6px; word-break: break-word; }
+    details { margin-top: 8px; font-size: 13px; }
+    summary { cursor: pointer; color: var(--accent); margin-bottom: 6px; }
+  </style>
+</head>
+<body>
+  <header>
+    <div>
+      <h1 id="name">Booster K1</h1>
+      <div class="sub" id="firmware">connecting…</div>
+    </div>
+    <div class="sub"><span class="dot" id="dot"></span><span id="conn">offline</span></div>
+  </header>
+
+  <main>
+    <section class="card">
+      <h2>Battery</h2>
+      <div class="big" id="battery">–</div>
+      <div class="bar"><div id="batteryBar"></div></div>
+      <div class="err-text" id="batteryErr"></div>
+    </section>
+
+    <section class="card">
+      <h2>Status</h2>
+      <dl>
+        <dt>Mode</dt><dd id="mode">–</dd>
+        <dt>Serial</dt><dd id="serial">–</dd>
+        <dt>Edition</dt><dd id="edition">–</dd>
+        <dt>Updated</dt><dd id="updated">–</dd>
+      </dl>
+      <div class="err-text" id="infoErr"></div>
+    </section>
+
+    <section class="card wide">
+      <h2>Temperature</h2>
+      <div class="temps">
+        <div>
+          <h3>Computer</h3>
+          <div id="sysTemps" class="chips">–</div>
+        </div>
+        <div>
+          <h3>Battery</h3>
+          <div id="batTemp" class="chips">–</div>
+        </div>
+        <div>
+          <h3>Motors</h3>
+          <div id="motorSummary" class="chips">–</div>
+          <details id="motorDetails" hidden>
+            <summary>All joints</summary>
+            <div id="motorList" class="chips"></div>
+          </details>
+        </div>
+      </div>
+      <div class="legend">
+        <span><i style="background:var(--ok)"></i>Normal</span>
+        <span><i style="background:var(--warn)"></i>Warm</span>
+        <span><i style="background:var(--bad)"></i>Dangerous</span>
+      </div>
+    </section>
+
+    <section class="card wide">
+      <h2>Say something</h2>
+      <textarea id="text" maxlength="300" placeholder="Type what the robot should say…"></textarea>
+      <div class="row">
+        <select id="voice"></select>
+        <button id="speak">Speak</button>
+        <span class="counter" id="counter">0 / 300</span>
+      </div>
+      <div class="row">
+        <button class="ghost" data-phrase="Hello, I am Booster K1. Nice to meet you.">Greeting</button>
+        <button class="ghost" data-phrase="Welcome to Robopreneur. Please feel free to look around.">Welcome</button>
+        <button class="ghost" data-phrase="Thank you for visiting. Have a nice day.">Goodbye</button>
+      </div>
+      <div class="msg" id="msg"></div>
+    </section>
+  </main>
+
+  <script>
+    // Shortcut for document.getElementById
+    const $ = (id) => document.getElementById(id);
+
+    // ---- Status: ask the robot for battery/mode every 2 seconds ----
+    async function refreshStatus() {
+      try {
+        const res = await fetch("/api/status");
+        const s = await res.json();
+
+        $("dot").classList.add("on");
+        $("conn").textContent = "online";
+
+        // Battery
+        const pct = s.battery_percent;
+        if (pct !== null && pct !== undefined) {
+          $("battery").textContent = pct + "%";
+          $("batteryBar").style.width = pct + "%";
+          $("batteryBar").style.background =
+            pct < 20 ? "var(--bad)" : pct < 40 ? "var(--warn)" : "var(--ok)";
+          $("batteryErr").textContent = "";
+        } else {
+          $("battery").textContent = "?";
+          $("batteryErr").textContent = describeProblem(s.battery);
+        }
+
+        // Mode
+        $("mode").textContent =
+          s.mode && typeof s.mode === "object" ? (s.mode.error || JSON.stringify(s.mode)) : s.mode;
+
+        // Robot info
+        const info = s.info && typeof s.info === "object" ? s.info : {};
+        const extra = info.extra || {};
+        $("name").textContent = extra.Nickname || info.name || "Booster K1";
+        $("firmware").textContent = "Firmware " + (info.firmware_version || "unknown");
+        $("serial").textContent = info.serial_number || extra.SN || "–";
+        $("edition").textContent = extra.Edition || "–";
+        $("infoErr").textContent = info.firmware_version ? "" : describeProblem(s.info);
+        $("updated").textContent = new Date(s.ts * 1000).toLocaleTimeString();
+        showTemperatures(s.temperatures || {});
+      } catch (e) {
+        $("dot").classList.remove("on");
+        $("conn").textContent = "offline";
+      }
+    }
+
+    // Short explanation when a value can't be shown
+    function describeProblem(value) {
+      if (value && value.error) return value.error;
+      return "Field not recognised. Open /api/debug/raw to see the raw data.";
+    }
+
+    // ---- Temperatures ----
+    // [warm, dangerous] thresholds in °C. Green below warm, amber from warm,
+    // red from dangerous. Rough defaults: adjust once you know the K1's normal range.
+    const LIMITS = { system: [70, 85], battery: [45, 55], motor: [60, 75] };
+
+    function chip(label, temp, kind) {
+      const [warm, danger] = LIMITS[kind];
+      const level = temp >= danger ? "bad" : temp >= warm ? "warn" : "ok";
+      return `<span class="chip ${level}">${label} <b>${temp}°C</b></span>`;
+    }
+
+    function showTemperatures(t) {
+      const sys = t.system || [];
+      $("sysTemps").innerHTML = sys.length
+        ? sys.map((z) => chip(z.name, z.temp, "system")).join("")
+        : "Not available";
+
+      $("batTemp").innerHTML = t.battery !== null && t.battery !== undefined
+        ? chip("pack", t.battery, "battery")
+        : "Not reported";
+
+      const motors = t.motors || [];
+      if (motors.length) {
+        const hottest = motors[0];  // list is sorted hottest first
+        $("motorSummary").innerHTML = chip("hottest: " + hottest.joint, hottest.temp, "motor");
+        $("motorList").innerHTML = motors.map((m) => chip(m.joint, m.temp, "motor")).join("");
+        $("motorDetails").hidden = false;
+      } else {
+        $("motorSummary").textContent = "Not reported by SDK";
+        $("motorDetails").hidden = true;
+      }
+    }
+
+    // ---- Voices: fill the dropdown ----
+    async function loadVoices() {
+      const res = await fetch("/api/voices");
+      const v = await res.json();
+      for (const name of v.voices) {
+        const opt = document.createElement("option");
+        opt.value = name;
+        opt.textContent = name;
+        if (name === v.default) opt.selected = true;
+        $("voice").appendChild(opt);
+      }
+    }
+
+    // ---- Speak: send text to the robot ----
+    async function speak(text) {
+      text = text.trim();
+      if (!text) return;
+      $("speak").disabled = true;
+      $("msg").className = "msg";
+      $("msg").textContent = "Speaking…";
+      try {
+        const res = await fetch("/api/say", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ text: text, voice: $("voice").value }),
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.detail || res.statusText);
+        $("msg").textContent = `Done in ${data.seconds}s using ${data.engine}`;
+      } catch (e) {
+        $("msg").className = "msg err";
+        $("msg").textContent = "Error: " + e.message;
+      } finally {
+        $("speak").disabled = false;
+      }
+    }
+
+    $("speak").onclick = () => speak($("text").value);
+    $("text").addEventListener("keydown", (e) => {
+      // Ctrl+Enter (or Cmd+Enter) speaks
+      if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) speak($("text").value);
+    });
+    $("text").addEventListener("input", () => {
+      $("counter").textContent = $("text").value.length + " / 300";
+    });
+    document.querySelectorAll("[data-phrase]").forEach((btn) => {
+      btn.onclick = () => speak(btn.dataset.phrase);
+    });
+
+    loadVoices();
+    refreshStatus();
+    setInterval(refreshStatus, 2000);
+  </script>
+</body>
+</html>
