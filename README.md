@@ -15,6 +15,52 @@ Current version (v1) shows live robot status, makes the robot speak, and plays u
 
 ---
 
+## Using the interface
+
+This section is for anyone who only needs to open the page and use it. No coding needed.
+
+### Open the page
+
+1. Turn on the robot and wait about a minute for it to finish starting up.
+2. Connect your phone or laptop to the **same Wi-Fi network** as the robot.
+3. Open the **Booster App** on a phone connected to the robot and note the robot's IP address, for example `192.168.0.73`.
+4. In any browser (Chrome, Safari, Edge), type the address followed by `:8000`:
+
+   ```
+   http://192.168.0.73:8000
+   ```
+
+   Type `http://`, not `https://`, and don't forget `:8000`.
+5. The top right of the page should show a green dot and **online**.
+
+### Make it quicker next time
+
+- **Laptop:** bookmark the page (Ctrl+D, or Cmd+D on a Mac).
+- **Android (Chrome):** tap ⋮ then **Add to Home screen**.
+- **iPhone (Safari):** tap the Share button then **Add to Home Screen**.
+
+The page then opens like an app. If it stops working after the robot restarts, the IP address may have changed: check the Booster App again and update the bookmark.
+
+### What's on the page
+
+The **Battery** and **Status** cards update every 2 seconds. **Temperature** shows green for normal, amber for warm and red for dangerous. If anything is red, stop using the robot and tell the team.
+
+To make the robot talk, go to **Say something**, type up to 300 characters, pick a voice, and press **Speak** (or Ctrl+Enter). The Greeting, Welcome and Goodbye buttons say a ready-made line with one tap.
+
+To play a sound, go to **Play a sound**, choose a file, and press **Play**. MP3, WAV, M4A, OGG and FLAC all work, up to 50 MB. The line under the buttons shows what's playing and for how long. Press **Stop** to cut it off.
+
+The **Volume** slider sets how loud the robot is, for both speech and sounds. It changes straight away, even in the middle of a song.
+
+The robot plays one thing at a time. If it's already speaking or playing, wait for it to finish or press Stop first.
+
+### If the page won't open
+
+- Check your device is on the same Wi-Fi as the robot (not mobile data).
+- Check the IP address in the Booster App. It can change after the robot restarts.
+- If the address is right and the page still won't load, the k1b server isn't running on the robot. Ask whoever looks after k1b to start it (see [Daily workflow](#daily-workflow)).
+
+---
+
 ## How it works
 
 ```
