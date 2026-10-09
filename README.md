@@ -2,13 +2,15 @@
 
 A web interface for the **Booster K1** humanoid robot. It runs on the robot and is opened from any browser on the same network.
 
-Current version (v1) shows live robot status and makes the robot speak. It sends **no motion commands**.
+Current version (v1) shows live robot status, makes the robot speak, and plays uploaded audio files. It sends **no motion commands**.
 
 | Feature | Status |
 |---|---|
 | Battery level, mode, serial, edition, firmware | Working |
 | Temperatures (computer, battery, motors if reported) | Working, colour-coded |
 | Text to speech (Piper or espeak-ng) | Working |
+| Upload and play an audio file (WAV, MP3, OGG, FLAC, M4A) | Working |
+| Speaker volume slider | Working |
 | Head movement, walking | Not started |
 
 ---
@@ -22,7 +24,8 @@ Browser (laptop / phone)
 app.py  (FastAPI, runs ON the robot)
         ├── boosteros SDK  ──►  battery, mode, robot info, joints
         ├── /sys/class/thermal  ──►  Jetson temperatures
-        └── Piper / espeak-ng  ──►  WAV  ──►  paplay  ──►  USB speaker
+        ├── Piper / espeak-ng  ──►  WAV  ──┐
+        └── uploaded file ─► ffmpeg ─► WAV ─┴─►  paplay  ──►  USB speaker
 ```
 
 The Booster SDK (`boosteros`) only runs on the robot itself or in Booster Studio's simulator, so the server must run on the K1. The SDK allows only one `BoosterRobot` instance per robot; `app.py` creates it once at startup and every request goes through it.
@@ -77,8 +80,10 @@ cd /home/booster/Workspace/k1b
 python3 -m venv .venv --system-site-packages
 source .venv/bin/activate
 pip install -r requirements.txt
-sudo apt install -y espeak-ng
+sudo apt install -y espeak-ng ffmpeg
 ```
+
+`ffmpeg` converts uploaded MP3/M4A files. Without it, only WAV, FLAC and OGG uploads play.
 
 `--system-site-packages` is required so the venv can see Booster's preinstalled `boosteros` SDK and the ROS 2 libraries.
 
@@ -168,10 +173,18 @@ After each sync, stop the server with Ctrl+C and start it again.
 | GET | `/api/status` | Battery, mode, robot info, temperatures |
 | GET | `/api/voices` | Available voices |
 | POST | `/api/say` | Speak text. Body: `{"text": "...", "voice": "en_US-lessac-medium"}` |
+| POST | `/api/play` | Upload and play an audio file. Multipart form, field `file` |
+| POST | `/api/stop` | Stop whatever is playing (speech or file) |
+| GET | `/api/volume` | Speaker volume, 0 to 100 |
+| POST | `/api/volume` | Set speaker volume. Body: `{"volume": 70}` |
 | GET | `/api/debug/raw` | Raw SDK output for robot info, battery, mode |
 | GET | `/api/debug/joints` | Raw joint state (to find motor temperatures) |
 
-`/api/say` limits text to 300 characters and returns `409` if the robot is already speaking.
+The speaker plays one thing at a time. `/api/say` and `/api/play` return `409` if something is already playing; press Stop first. `/api/say` limits text to 300 characters and waits until speech ends. `/api/play` returns as soon as playback starts, accepts files up to 50 MB (`MAX_UPLOAD_MB` in `app.py`), and doesn't keep the file afterwards.
+
+The volume slider sets the system output level of the default PulseAudio sink with `pactl`, so it applies to speech and files and takes effect on a sound that's already playing. It also unmutes the sink. The level persists until something else changes it.
+
+Test from the laptop: `curl -F file=@song.mp3 http://192.168.0.73:8000/api/play`
 
 ---
 
@@ -212,6 +225,8 @@ These are rough defaults. Adjust them once the K1's normal operating range is kn
 | `LocoClientInitError` on start | Robot still booting. Wait 30 to 60 seconds after power on |
 | No sound | `paplay /usr/share/sounds/alsa/Front_Center.wav` should play. If not, check `pactl get-default-sink` is the USB device |
 | Voice dropdown shows only `espeak` | No `.onnx` files in `~/Workspace/k1b/voices/` on the robot |
+| Volume shows `?` | `pactl get-sink-volume @DEFAULT_SINK@` on the robot should print a percentage |
+| Upload fails with "without ffmpeg" | `sudo apt install -y ffmpeg` on the robot, or upload WAV/OGG/FLAC |
 | `paplay: Connection refused` | `export XDG_RUNTIME_DIR=/run/user/1000` |
 
 Robot service commands:

@@ -10,12 +10,15 @@ Then open http://192.168.0.73:8000 in any browser on the same network.
 Features (v1):
     - Live status: battery, mode, robot info
     - Speak: type text, the robot says it (Piper voice, espeak-ng fallback)
+    - Play audio: upload a sound file, the robot plays it
+    - Volume: set the speaker level from the page
 
 No motion commands in this version.
 """
 import dataclasses
 import enum
 import os
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -24,9 +27,9 @@ import time
 from contextlib import asynccontextmanager
 from pathlib import Path
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, File, HTTPException, UploadFile
 from fastapi.responses import FileResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from boosteros.robots.booster import BoosterRobot
 
@@ -34,13 +37,17 @@ BASE_DIR = Path(__file__).resolve().parent
 VOICES_DIR = BASE_DIR / "voices"
 DEFAULT_VOICE = "en_US-lessac-medium"
 MAX_TEXT = 300
+MAX_UPLOAD_MB = 50
+# paplay reads these directly. Anything else (mp3, m4a, ...) needs ffmpeg.
+NATIVE_AUDIO = {".wav", ".flac", ".ogg", ".oga"}
 
 # Only one BoosterRobot instance may exist per robot (Booster SDK rule).
 robot = None
 robot_info = {}
 
 sdk_lock = threading.Lock()      # serialises SDK calls
-speech_lock = threading.Lock()   # one sentence at a time
+audio_lock = threading.Lock()    # guards `player`
+player = None                    # what the speaker is doing right now, or None
 
 
 # ---------- helpers ----------
@@ -208,11 +215,103 @@ def synthesize(text, voice, wav_path):
     return engine
 
 
-def play(wav_path):
-    result = subprocess.run(["paplay", wav_path], capture_output=True, text=True,
-                            env=audio_env(), timeout=120)
+def remove(path):
+    try:
+        os.unlink(path)
+    except OSError:
+        pass
+
+
+def speaker_busy():
+    return player is not None and player["proc"].poll() is None
+
+
+def start_playback(path, label, kind):
+    """
+    Start paplay in the background and return the process.
+    Only one sound plays at a time: speech and uploaded files share the speaker.
+    `path` is deleted once playback ends or is stopped.
+    """
+    global player
+    with audio_lock:
+        if speaker_busy():
+            remove(path)
+            raise HTTPException(409, f"The robot is already playing: {player['label']}")
+        proc = subprocess.Popen(["paplay", path], stdout=subprocess.DEVNULL,
+                                stderr=subprocess.PIPE, text=True, env=audio_env())
+        player = {"proc": proc, "label": label, "kind": kind, "started": time.time()}
+
+    def cleanup():
+        proc.wait()
+        remove(path)
+
+    threading.Thread(target=cleanup, daemon=True).start()
+    return proc
+
+
+def stop_playback():
+    """Stop whatever is playing. Returns the label of what was stopped, or None."""
+    with audio_lock:
+        if not speaker_busy():
+            return None
+        player["proc"].terminate()
+        try:
+            player["proc"].wait(timeout=2)
+        except subprocess.TimeoutExpired:
+            player["proc"].kill()
+        return player["label"]
+
+
+def audio_state():
+    if not speaker_busy():
+        return {"playing": False}
+    return {"playing": True, "label": player["label"], "kind": player["kind"],
+            "elapsed": round(time.time() - player["started"], 1)}
+
+
+def pactl(*args):
+    result = subprocess.run(["pactl", *args], capture_output=True, text=True,
+                            env=audio_env(), timeout=5)
     if result.returncode != 0:
-        raise RuntimeError(f"paplay failed: {result.stderr.strip()}")
+        raise HTTPException(500, f"pactl failed: {result.stderr.strip() or result.stdout.strip()}")
+    return result.stdout
+
+
+def get_volume():
+    """Speaker volume in percent, read from the default PulseAudio output."""
+    out = pactl("get-sink-volume", "@DEFAULT_SINK@")
+    # e.g. "Volume: front-left: 32768 /  50% / -18.06 dB,   front-right: ..."
+    levels = [int(p.strip().rstrip("%")) for p in out.split("/") if p.strip().endswith("%")]
+    if not levels:
+        raise HTTPException(500, f"Couldn't read the volume from: {out.strip()[:200]}")
+    return round(sum(levels) / len(levels))
+
+
+def set_volume(percent):
+    pactl("set-sink-mute", "@DEFAULT_SINK@", "0")
+    pactl("set-sink-volume", "@DEFAULT_SINK@", f"{percent}%")
+
+
+def to_wav(src, suffix):
+    """
+    Return a path paplay can play. Files paplay understands are used as they
+    are; anything else is converted with ffmpeg. The caller deletes both paths.
+    """
+    if suffix in NATIVE_AUDIO:
+        return src
+    if not shutil.which("ffmpeg"):
+        raise HTTPException(415, f"Can't play {suffix or 'this'} files without ffmpeg. "
+                                 "Upload WAV, FLAC or OGG, or install ffmpeg on the robot.")
+    dst = src + ".wav"
+    result = subprocess.run(
+        ["ffmpeg", "-nostdin", "-v", "error", "-y", "-i", src,
+         "-vn", "-ac", "2", "-ar", "48000", "-c:a", "pcm_s16le", dst],
+        capture_output=True, text=True, timeout=120)
+    if result.returncode != 0:
+        remove(dst)
+        raise HTTPException(400, "Couldn't read that file as audio: "
+                                 + (result.stderr.strip()[-300:] or "unknown error"))
+    return dst
 
 
 # ---------- app ----------
@@ -246,6 +345,7 @@ def status():
         "battery_percent": battery_percent(battery),
         "mode": read(robot.get_mode),
         "info": robot_info,
+        "audio": audio_state(),
         "temperatures": {
             "system": system_temperatures(),
             "battery": battery_temperature(battery),
@@ -296,19 +396,89 @@ def say(req: SayRequest):
     if len(text) > MAX_TEXT:
         raise HTTPException(400, f"Text is longer than {MAX_TEXT} characters")
 
-    if not speech_lock.acquire(blocking=False):
-        raise HTTPException(409, "The robot is already speaking")
+    if speaker_busy():  # fail fast, before spending time on synthesis
+        raise HTTPException(409, f"The robot is already playing: {player['label']}")
+
+    start = time.time()
+    with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as f:
+        wav_path = f.name
     try:
-        start = time.time()
-        with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as f:
-            wav_path = f.name
-        try:
-            engine = synthesize(text, req.voice, wav_path)
-            play(wav_path)
-        finally:
-            os.unlink(wav_path)
-        return {"ok": True, "engine": engine, "seconds": round(time.time() - start, 2)}
+        engine = synthesize(text, req.voice, wav_path)
     except RuntimeError as e:
+        remove(wav_path)
         raise HTTPException(500, str(e))
-    finally:
-        speech_lock.release()
+
+    # Speech is short, so wait for it to finish before replying.
+    proc = start_playback(wav_path, f'"{text[:40]}"', "speech")
+    proc.wait()
+    if proc.returncode > 0:  # negative means it was stopped on purpose
+        raise HTTPException(500, f"paplay failed: {proc.stderr.read().strip()}")
+    return {"ok": True, "engine": engine, "seconds": round(time.time() - start, 2)}
+
+
+@app.post("/api/play")
+def play_file(file: UploadFile = File(...)):
+    """
+    Upload an audio file and play it on the robot's speaker.
+    Returns as soon as playback starts. Use /api/stop to cut it off.
+    """
+    if speaker_busy():
+        raise HTTPException(409, f"The robot is already playing: {player['label']}")
+
+    name = Path(file.filename or "upload").name
+    suffix = Path(name).suffix.lower()
+    limit = MAX_UPLOAD_MB * 1024 * 1024
+
+    with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as f:
+        upload_path = f.name
+        size = 0
+        while chunk := file.file.read(1024 * 1024):
+            size += len(chunk)
+            if size > limit:
+                f.close()
+                remove(upload_path)
+                raise HTTPException(413, f"File is larger than {MAX_UPLOAD_MB} MB")
+            f.write(chunk)
+    if size == 0:
+        remove(upload_path)
+        raise HTTPException(400, "File is empty")
+
+    try:
+        path = to_wav(upload_path, suffix)
+    except HTTPException:
+        remove(upload_path)
+        raise
+    if path != upload_path:
+        remove(upload_path)
+
+    proc = start_playback(path, name, "file")
+    time.sleep(0.3)  # catch files paplay rejects straight away
+    if proc.poll() not in (None, 0):
+        raise HTTPException(400, f"paplay couldn't play {name}: {proc.stderr.read().strip()}")
+    return {"ok": True, "playing": name, "size_mb": round(size / 1024 / 1024, 2)}
+
+
+@app.post("/api/stop")
+def stop():
+    """Stop whatever the speaker is playing (speech or a file)."""
+    stopped = stop_playback()
+    return {"ok": True, "stopped": stopped}
+
+
+@app.get("/api/volume")
+def volume():
+    return {"volume": get_volume()}
+
+
+class VolumeRequest(BaseModel):
+    volume: int = Field(ge=0, le=100)
+
+
+@app.post("/api/volume")
+def change_volume(req: VolumeRequest):
+    """
+    Set the speaker volume (0-100). This is the system output level, so it
+    applies to speech and files alike and changes a sound that's already playing.
+    """
+    set_volume(req.volume)
+    return {"ok": True, "volume": get_volume()}

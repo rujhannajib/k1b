@@ -45,6 +45,13 @@
     button { background: var(--accent); color: white; border: none; cursor: pointer; }
     button:disabled { opacity: .5; cursor: wait; }
     button.ghost { background: transparent; color: var(--accent); border: 1px solid var(--accent); }
+    button.stop { background: var(--bad); }
+    input[type=file] { font: inherit; font-size: 14px; flex: 1; min-width: 0; }
+    .now { font-size: 14px; margin-top: 10px; }
+    .now b { font-weight: 600; }
+    .volume { display: flex; align-items: center; gap: 12px; margin-top: 14px; font-size: 14px; }
+    .volume input { flex: 1; accent-color: var(--accent); }
+    .volume output { width: 44px; text-align: right; font-variant-numeric: tabular-nums; }
     .msg { font-size: 13px; color: var(--muted); margin-top: 8px; min-height: 18px; }
     .msg.err { color: var(--bad); }
     .counter { margin-left: auto; font-size: 12px; color: var(--muted); }
@@ -136,6 +143,22 @@
       </div>
       <div class="msg" id="msg"></div>
     </section>
+
+    <section class="card wide">
+      <h2>Play a sound</h2>
+      <div class="row">
+        <input type="file" id="audioFile" accept="audio/*,.mp3,.wav,.ogg,.flac,.m4a">
+        <button id="playFile">Play</button>
+        <button id="stopAudio" class="stop">Stop</button>
+      </div>
+      <div class="now" id="nowPlaying">Speaker idle</div>
+      <div class="volume">
+        <label for="volume">Volume</label>
+        <input type="range" id="volume" min="0" max="100" step="5" value="50" disabled>
+        <output id="volumeValue">–</output>
+      </div>
+      <div class="msg" id="audioMsg"></div>
+    </section>
   </main>
 
   <script>
@@ -178,6 +201,7 @@
         $("infoErr").textContent = info.firmware_version ? "" : describeProblem(s.info);
         $("updated").textContent = new Date(s.ts * 1000).toLocaleTimeString();
         showTemperatures(s.temperatures || {});
+        showAudio(s.audio || {});
       } catch (e) {
         $("dot").classList.remove("on");
         $("conn").textContent = "offline";
@@ -272,7 +296,101 @@
       btn.onclick = () => speak(btn.dataset.phrase);
     });
 
+    // ---- Audio files: upload and play on the robot's speaker ----
+    function showAudio(a) {
+      if (!a.playing) {
+        $("nowPlaying").textContent = "Speaker idle";
+        return;
+      }
+      const secs = Math.floor(a.elapsed);
+      const clock = Math.floor(secs / 60) + ":" + String(secs % 60).padStart(2, "0");
+      $("nowPlaying").innerHTML = "";
+      $("nowPlaying").append("Playing ");
+      const b = document.createElement("b");
+      b.textContent = a.label;  // textContent: file names are user input
+      $("nowPlaying").append(b, " · " + clock);
+    }
+
+    function audioMessage(text, isError) {
+      $("audioMsg").className = isError ? "msg err" : "msg";
+      $("audioMsg").textContent = text;
+    }
+
+    async function playFile() {
+      const file = $("audioFile").files[0];
+      if (!file) return audioMessage("Choose an audio file first.", true);
+      const form = new FormData();
+      form.append("file", file);
+      $("playFile").disabled = true;
+      audioMessage(`Uploading ${file.name} (${(file.size / 1048576).toFixed(1)} MB)…`);
+      try {
+        const res = await fetch("/api/play", { method: "POST", body: form });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.detail || res.statusText);
+        audioMessage("");
+        refreshStatus();
+      } catch (e) {
+        audioMessage("Error: " + e.message, true);
+      } finally {
+        $("playFile").disabled = false;
+      }
+    }
+
+    async function stopAudio() {
+      try {
+        const res = await fetch("/api/stop", { method: "POST" });
+        const data = await res.json();
+        audioMessage(data.stopped ? "Stopped " + data.stopped : "Nothing was playing.");
+        refreshStatus();
+      } catch (e) {
+        audioMessage("Error: " + e.message, true);
+      }
+    }
+
+    // ---- Volume: system speaker level, covers speech and files ----
+    let volumeTimer = null;
+
+    async function loadVolume() {
+      try {
+        const res = await fetch("/api/volume");
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.detail || res.statusText);
+        $("volume").value = data.volume;
+        $("volumeValue").textContent = data.volume + "%";
+        $("volume").disabled = false;
+      } catch (e) {
+        $("volumeValue").textContent = "?";
+        audioMessage("Volume unavailable: " + e.message, true);
+      }
+    }
+
+    async function sendVolume(level) {
+      try {
+        const res = await fetch("/api/volume", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ volume: level }),
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.detail || res.statusText);
+      } catch (e) {
+        audioMessage("Error: " + e.message, true);
+      }
+    }
+
+    // Update the number while dragging; send at most every 150 ms.
+    $("volume").addEventListener("input", () => {
+      const level = Number($("volume").value);
+      $("volumeValue").textContent = level + "%";
+      clearTimeout(volumeTimer);
+      volumeTimer = setTimeout(() => sendVolume(level), 150);
+    });
+
+    $("playFile").onclick = playFile;
+    $("stopAudio").onclick = stopAudio;
+
     loadVoices();
+    loadVolume();
     refreshStatus();
     setInterval(refreshStatus, 2000);
   </script>
